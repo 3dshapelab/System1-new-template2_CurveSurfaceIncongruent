@@ -88,14 +88,14 @@ double visual_angle = 8; // stim diangonal size
 double stimulus_height = tan((DEG2RAD * visual_angle) / 2) * 2 * (abs(display_distance));
 double stimulus_width = 1.2 * stimulus_height;
 // stimulus depth
-double depth = 10;
+double depth = 20;
 double depth_step = 5;
+double depth_disparity = 20, depth_texture = 20;
 
 /********* TEXTURE *********/
 double normalizer_base = 90; // maximum distance along the side on the sine wave fluctuating in depth
 double normalizer = normalizer_base; //will vary based on display distance
-double normalizer_u = normalizer_base;
-double normalizer_v = normalizer_base;
+
 //TEXTURE LOADING VARIABLE
 GLuint loadedTexture[5];
 int texnum = 0;
@@ -144,7 +144,8 @@ void initRendering();
 void initStimulus();
 void drawStimulus();
 double calculateStimulus_ZfromY(double cylDepth, double vertexY);
-void buildVertices_triangles(double cylinderDepth, VerticesData& vertices_data);
+Vector3d projectPoint_newSurface(Vector3d originalPoint, double newDepth);
+void buildVertices_triangles(double DispDepth, double TextDepth, VerticesData& vertices_data);
 void drawVertices_triangles(int texNum, const VerticesData& vertices_data);
 int LoadGLTextures();
 void drawInfo();
@@ -177,11 +178,11 @@ void drawInfo() {
 	text.draw(" IOD: " + stringify<double>(interoculardistance) + "     --- Press M N");
 	text.draw(" depth: " + stringify<double>(depth) + "     --- Press 1 2");
 	text.draw("   ");
-	text.draw(" texture ID: " + stringify<int>(texnum) + "     --- Press +");
+	text.draw(" disparity depth: " + stringify<double>(depth_disparity) + "     --- Press 4 5");
+	text.draw(" texture depth: " + stringify<double>(depth_texture) + "     --- Press 7 8");
 	text.draw("   ");
 	text.draw(" normalizer: " + stringify<double>(normalizer) + "     --- Press 6 9");
-	text.draw(" normalizer_u: " + stringify<double>(normalizer_u) + "     --- Press 4 5");
-	text.draw(" normalizer_v: " + stringify<double>(normalizer_v) + "     --- Press 7 8");
+
 
 	text.leaveTextInputMode();
 	glEnable(GL_COLOR_MATERIAL);
@@ -206,7 +207,39 @@ double calculateStimulus_ZfromY(double cylDepth, double vertexY) {
 	return (vertexZ);
 }
 
-void buildVertices_triangles(double cylinderDepth, VerticesData& vertices_data) {
+
+Vector3d projectPoint_newSurface(Vector3d originalPoint, double newDepth) {
+	// the original point is one vertex on the original surface
+	// we want to find the intersection between the ray (connecting the cyclopean eye and the original vertex) and the new surface
+	// see the details in the lab materials/coding an experiment/cueConflictCylinder_TextureDisparity.pptx
+	Vector3d newPoint;
+
+	if (abs(originalPoint[1]) == stimulus_height / 2) {
+
+		newPoint = originalPoint; // x_original
+
+	}
+	else {
+
+		double h = stimulus_height / 2;
+		double l = -display_distance;
+		double a = originalPoint[1] / ((originalPoint[2] - l) * h);
+		double b = 1 / pow(newDepth, 2);
+
+		double z_projected = (sqrt(pow(a * l, 2) * (-b) + pow(a, 2) + b) + pow(a, 2) * l) / (pow(a, 2) + b); // surface function z
+
+		newPoint[0] = originalPoint[0]; // x_original
+		newPoint[1] = originalPoint[1] * (z_projected - l) / (originalPoint[2] - l);
+		newPoint[2] = z_projected;
+	}
+
+	return newPoint;
+
+}
+
+
+void buildVertices_triangles(double DispDepth, double TextDepth, VerticesData& vertices_data)
+{
 	vertices_data.vertices_vec.clear();
 	vertices_data.colors_vec.clear();
 	vertices_data.texcoors_vec.clear();
@@ -214,137 +247,137 @@ void buildVertices_triangles(double cylinderDepth, VerticesData& vertices_data) 
 
 	double step_size_width = (stimulus_width / (nr_points_width - 1));
 	double step_size_height = (stimulus_height / (nr_points_height - 1));
+	double total_distance_y = 2; //tracks the distance along y/z axis, approximate the "diameter" of the ellipse
 
-	int v_index = 0, t_index = 0, ind = 0; //using array 
-	GLuint i_ind = 0;
+	if(abs(DispDepth - TextDepth) < 0.1) {
 
-	double x, y, z, y_prev, z_prev, u, v;
-	y_prev = -stimulus_height / 2;
-	z_prev = calculateStimulus_ZfromY(cylinderDepth, y_prev);
-	double total_distance_y = 0; //tracks the distance along y/z axis, approximate the "diameter" of the ellipse
+		GLuint i_ind = 0;
 
-	for (int j = 0; j < nr_points_height; j++) {  // 
-		y = -stimulus_height / 2 + j * step_size_height;
-		z = calculateStimulus_ZfromY(cylinderDepth, y);
-
-		total_distance_y = total_distance_y + sqrt(pow(y - y_prev, 2) + pow(z - z_prev, 2));
-		v = total_distance_y / normalizer_v; //v coordinate
-
-		for (int i = 0; i < nr_points_width; i++) { //
-			x = -stimulus_width / 2 + i * step_size_width;
-			u = (x + stimulus_width / 2) / normalizer_u; //u coordinate. 
-
-			/*
-			step 1: build the meshgrid using vertices,
+		double x, y, z, y_prev, z_prev, u, v;
+		y_prev = -stimulus_height / 2;
+		z_prev = 0;
 
 
-			(8)---(9)---(10)--(11)
-			 |     |     |     |
-			 |     |     |     |
-			 |     |     |     |
-			 |     |     |     |
-			(4)---(5)---(6)---(7)
-			 |     |     |     |
-			 |     |     |     |
-			 |     |     |     |
-			 |     |     |     |
-			(0)---(1)---(2)---(3)
+		for (int j = 0; j < nr_points_height; j++) {  // 
+			y = -stimulus_height / 2 + j * step_size_height;
+			z = calculateStimulus_ZfromY(DispDepth, y);
 
+			total_distance_y = total_distance_y + sqrt(pow(y - y_prev, 2) + pow(z - z_prev, 2));
+			v = total_distance_y / normalizer; //v coordinate
 
-			going over each vertex: store the (x,y,z) to vertices array or vector, (u,v) to texcoors array or vector, (1,0,0) to colors array or vector,
-			if light source or shading is involved, normals are needed
-			*/
-
-
-			/*
-			// uring array
-			vertices[v_index] = x;
-			colors[v_index] = 1;
-			//normals[v_index] = 0;
-			v_index++;
-			vertices[v_index] = y;
-			colors[v_index] = 0;
-			//normals[v_index] = y * cylinderDepth * cylinderDepth;
-			v_index++;
-			vertices[v_index] = z;
-			colors[v_index] = 0;
-			//normals[v_index] = z * stimulus_height * stimulus_height /4;
-			v_index++;
-
-			texcoors[t_index] = u; //(x + stimulus_width / 2) / normalizer_u; //u coordinate.
-			t_index++;
-			texcoors[t_index] = v; //total_distance_y / normalizer_v; //v coordinate
-			t_index++;
-			*/
-
-
-			// using vector
-			vertices_data.vertices_vec.push_back(x);
-			vertices_data.vertices_vec.push_back(y);
-			vertices_data.vertices_vec.push_back(z);
-
-			vertices_data.colors_vec.push_back(1);
-			vertices_data.colors_vec.push_back(0);
-			vertices_data.colors_vec.push_back(0);
-
-			vertices_data.texcoors_vec.push_back(u);
-			vertices_data.texcoors_vec.push_back(v);
-
-			/*
-				step 2: create an array/vector that store how the triangles should be drawn
-
-				The array/vector is one dimensional, but is groupped by unit of 3, meaning every three elements form a triangle
-
-				for example, if indices_draw_triangle is like [0 1 4 4 1 5 1 2 5 5 2 6 ...],
-				then it draws triangles with indices {0 1 4}, {4 1 5}, {1 2 5}, {5 2 6}...
-
-				(8)---(9)---(10)--(11)
-				 |\    |\    |\    |
-				 | \   | \   | \   |
-				 |  \  |  \  |  \  |
-				 |   \ |   \ |   \ |
-				(4)---(5)---(6)---(7)
-				 |\    |\    |\    |
-				 | \   | \   | \   |
-				 |  \  |  \  |  \  |
-				 |   \ |   \ |   \ |
-				(0)---(1)---(2)---(3)
-
-				triangle 1: 0 1 4;   triangle 2: 4 1 5
-				triangle 3: 1 2 5;   triangle 2: 5 2 6 ...
-			*/
-
-			// construct the triangle indices to be drawn
-			if (i < nr_points_width - 1 && j < nr_points_width - 1) {
-				// using array
-				/*
-				indices_draw_triangle[ind] = i_ind; ind++;
-				indices_draw_triangle[ind] = i_ind + 1; ind++;
-				indices_draw_triangle[ind] = i_ind + nr_points_width; ind++;
-
-				indices_draw_triangle[ind] = i_ind + nr_points_width; ind++;
-				indices_draw_triangle[ind] = i_ind + 1; ind++;
-				indices_draw_triangle[ind] = i_ind + nr_points_width + 1; ind++;
-				*/
+			for (int i = 0; i < nr_points_width; i++) { //
+				x = -stimulus_width / 2 + i * step_size_width;
+				u = (x + stimulus_width / 2) / normalizer; //u coordinate. 
 
 				// using vector
-				vertices_data.indices_draw_triangle_vec.push_back(i_ind);
-				vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
-				vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
+				vertices_data.vertices_vec.push_back(x);
+				vertices_data.vertices_vec.push_back(y);
+				vertices_data.vertices_vec.push_back(z);
 
-				vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
-				vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
-				vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width + 1);
-				ind = ind + 6;
+				vertices_data.colors_vec.push_back(1);
+				vertices_data.colors_vec.push_back(0);
+				vertices_data.colors_vec.push_back(0);
+
+				vertices_data.texcoors_vec.push_back(u);
+				vertices_data.texcoors_vec.push_back(v);
+
+
+
+				// construct the triangle indices to be drawn
+				if (i < nr_points_width - 1 && j < nr_points_width - 1) {
+
+					// using vector
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind);
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
+
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width + 1);
+
+				}
+
+				i_ind++;
 			}
 
-			i_ind++;
+			y_prev = y; z_prev = z;
 		}
 
-		y_prev = y; z_prev = z;
+	}
+	else {
+		
+		// Disp Depth is not the same as Text Depth, conflicting
+		GLuint i_ind = 0;
+		total_distance_y = 2;
+		double x, y, z, y_prev, z_prev, u, v, w;
+		Vector3d DispPoint, TextPoint, TextPoint_prev;
+		TextPoint_prev = Vector3d(0, -stimulus_height / 2, 0);
+
+		for (int j = 0; j < nr_points_height; j++) {  
+
+			y = -stimulus_height / 2 + j * step_size_height;
+
+			if (DispDepth < TextDepth) {
+
+				z = calculateStimulus_ZfromY(DispDepth, y);
+
+				DispPoint = Vector3d(0, y, z); //x remains the same so just take the value of 0 for convenience
+				TextPoint = projectPoint_newSurface(DispPoint, TextDepth);
+
+			}
+			else {
+
+				z = calculateStimulus_ZfromY(TextDepth, y);
+
+				TextPoint = Vector3d(0, y, z); //x remains the same so just take the value of 0 for convenience
+				DispPoint = projectPoint_newSurface(TextPoint, DispDepth);
+
+			}
+
+			total_distance_y = total_distance_y + sqrt(pow(TextPoint[1] - TextPoint_prev[1], 2) + pow(TextPoint[2] - TextPoint_prev[2], 2));
+			v = total_distance_y / normalizer; //v coordinate
+			
+
+			for (int i = 0; i < nr_points_width; i++) { //
+				x = -stimulus_width / 2 + i * step_size_width;
+				u = (x + stimulus_width / 2) / normalizer; //u coordinate. 
+
+				// using vector
+				vertices_data.vertices_vec.push_back(x);
+				vertices_data.vertices_vec.push_back(DispPoint[1]);
+				vertices_data.vertices_vec.push_back(DispPoint[2]);
+
+				vertices_data.colors_vec.push_back(1);
+				vertices_data.colors_vec.push_back(0);
+				vertices_data.colors_vec.push_back(0);
+
+				vertices_data.texcoors_vec.push_back(u);
+				vertices_data.texcoors_vec.push_back(v);
+
+
+
+				// construct the triangle indices to be drawn
+				if (i < nr_points_width - 1 && j < nr_points_width - 1) {
+
+					// using vector
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind);
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
+
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width);
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + 1);
+					vertices_data.indices_draw_triangle_vec.push_back(i_ind + nr_points_width + 1);
+
+				}
+
+				i_ind++;
+			}
+
+			y_prev = y; z_prev = z;
+			TextPoint_prev = TextPoint;
+		}
 	}
 
-	total_ind = ind;
 }
 
 void drawVertices_triangles(int texNum, const VerticesData& vertices_data) {
@@ -402,7 +435,7 @@ void drawVertices_triangles(int texNum, const VerticesData& vertices_data) {
 
 
 void initStimulus() {
-	buildVertices_triangles(depth, my_vertices);
+	buildVertices_triangles(depth_disparity, depth_texture, my_vertices);
 	initProjectionScreen(display_distance);
 	texnum = 1;
 }
@@ -479,10 +512,12 @@ void handleKeypress(unsigned char key, int x, int y)
 		{
 			if (depth > depth_step) {
 				depth = depth - depth_step;
+
 			}
 
-
-			buildVertices_triangles(depth, my_vertices);
+			depth_disparity = depth;
+			depth_texture = depth;
+			buildVertices_triangles(depth_disparity, depth_texture, my_vertices);
 
 
 		}
@@ -491,7 +526,54 @@ void handleKeypress(unsigned char key, int x, int y)
 		case '2':
 		{
 			depth = depth + depth_step;
-			buildVertices_triangles(depth, my_vertices);
+			depth_disparity = depth;
+			depth_texture = depth;
+			buildVertices_triangles(depth_disparity, depth_texture, my_vertices);
+
+
+		}
+		break;
+
+		case '4':
+		{
+			if (depth_disparity > depth_step) {
+				depth_disparity = depth_disparity - depth_step;
+			}
+
+			buildVertices_triangles(depth_disparity, depth_texture, my_vertices);
+
+
+		}
+		break;
+
+		case '5':
+		{
+			depth_disparity = depth_disparity + depth_step;
+
+			buildVertices_triangles(depth_disparity, depth_texture, my_vertices);
+
+
+		}
+		break;
+
+
+		case '7':
+		{
+			if (depth_texture > depth_step) {
+				depth_texture = depth_texture - depth_step;
+			}
+
+			buildVertices_triangles(depth_disparity, depth_texture, my_vertices);
+
+
+		}
+		break;
+
+		case '8':
+		{
+			depth_texture = depth_texture + depth_step;
+
+			buildVertices_triangles(depth_disparity, depth_texture, my_vertices);
 
 
 		}
@@ -519,50 +601,19 @@ void handleKeypress(unsigned char key, int x, int y)
 			break;
 		}
 
-		case '4':
-		{
-			normalizer_u = normalizer_u - 10;
-			buildVertices_triangles(depth, my_vertices);
-			break;
-		}
-
-		case '5':
-		{
-			normalizer_u = normalizer_u + 10;
-			buildVertices_triangles(depth, my_vertices);
-			break;
-		}
-
-		case '7':
-		{
-			normalizer_v = normalizer_v - 10;
-			buildVertices_triangles(depth, my_vertices);
-			break;
-		}
-
-		case '8':
-		{
-			normalizer_v = normalizer_v + 10;
-			buildVertices_triangles(depth, my_vertices);
-			break;
-		}
 
 
 		case '6':
 		{
 			normalizer = normalizer - 10;
-			normalizer_u = normalizer;
-			normalizer_v = normalizer;
-			buildVertices_triangles(depth, my_vertices);
+			buildVertices_triangles(depth_disparity, depth_texture, my_vertices);
 			break;
 		}
 
 		case '9':
 		{
 			normalizer = normalizer + 10;
-			normalizer_u = normalizer;
-			normalizer_v = normalizer;
-			buildVertices_triangles(depth, my_vertices);
+			buildVertices_triangles(depth_disparity, depth_texture, my_vertices);
 			break;
 		}
 	}
